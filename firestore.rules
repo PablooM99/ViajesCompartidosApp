@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+
+    // --- NUEVO: permiso para la collection group 'bookings' (solo pasajero) ---
+    match /{path=**}/bookings/{bookingId} {
+      // Permite que cada usuario vea SOLO sus propias reservas
+      allow read: if isSignedIn() && request.auth.uid == resource.data.uid;
+      // Escrituras SOLO por Cloud Functions
+      allow create, update, delete: if false;
+    }
+
+    // Usuarios (perfil)
+    match /users/{uid} {
+      allow read: if true;
+      allow create: if isOwner(uid);
+      allow update, delete: if isOwner(uid);
+
+      // Alertas (rutas seguidas para push)
+      match /alerts/{alertId} {
+        allow read, create, update, delete: if isOwner(uid);
+      }
+    }
+
+    // Reglas recurrentes del chofer
+    match /rules/{ruleId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.ownerUid);
+      allow create: if isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.ownerUid;
+    }
+
+    // Viajes
+    match /trips/{tripId} {
+      allow read: if true;
+      // Dueño puede actualizar salvo seatsAvailable (lo maneja la Function)
+      allow create: if isSignedIn();
+      allow update: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.seatsAvailable == resource.data.seatsAvailable;
+      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+
+      // Reservas
+      match /bookings/{bookingId} {
+        // Lectura: pasajero dueño de la reserva o dueño del viaje
+        allow read: if isSignedIn() && (
+          request.auth.uid == resource.data.uid ||
+          get(/databases/$(database)/documents/trips/$(tripId)).data.ownerUid == request.auth.uid
+        );
+        // Escrituras SOLO por Functions (admin SDK)
+        allow create, update, delete: if false;
+      }
+    }
+
+    // Reseñas del chofer (sólo lectura desde cliente)
+    match /drivers/{driverUid}/reviews/{rid} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+  }
+}

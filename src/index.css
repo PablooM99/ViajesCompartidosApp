@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+@theme {
+  --color-vc_bg: #F6F7F9;
+  --color-vc_primary: #9DD6DF;
+  --color-vc_accent: #F6B8B8;
+  --color-vc_text: #2E2E2E;
+}
+
+/* Estilos base del proyecto */
+html, body, #root { height: 100%; background: var(--color-vc_bg); }

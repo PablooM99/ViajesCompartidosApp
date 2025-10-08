@@ -1,0 +1,11 @@
+{
+    "name": "viajes-compartidos-functions",
+    "engines": { "node": "20" },
+    "type": "module",
+    "dependencies": {
+      "dayjs": "^1.11.13",
+      "firebase-admin": "^12.5.0",
+      "firebase-functions": "^5.1.0"
+    }
+  }
+  

@@ -1,0 +1,44 @@
+cat > .gitignore << 'EOF'
+# --- Node / package managers ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Vite / build ---
+dist/
+.vite/
+
+# --- Env (no subir claves) ---
+.env
+.env.*
+!.env.example
+
+# --- Firebase (local) ---
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# --- Firestore emulator export (si usás) ---
+local_firestore_export/
+
+# --- Cloud Functions ---
+functions/node_modules/
+functions/.cache/
+functions/lib/
+functions/.env*
+functions/firebase-debug.log
+
+# --- IDE / SO ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# --- Tests / coverage ---
+coverage/
+EOF
