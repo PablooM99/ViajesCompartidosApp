@@ -1,49 +1,56 @@
 {
-    "indexes": [
-      {
-        "collectionGroup": "rules",
-        "queryScope": "COLLECTION",
-        "fields": [
-          { "fieldPath": "ownerUid", "order": "ASCENDING" },
-          { "fieldPath": "updatedAt", "order": "DESCENDING" }
-        ]
-      },
-      {
-        "collectionGroup": "trips",
-        "queryScope": "COLLECTION",
-        "fields": [
-          { "fieldPath": "ownerUid", "order": "ASCENDING" },
-          { "fieldPath": "datetime", "order": "DESCENDING" }
-        ]
-      },
-      {
-        "collectionGroup": "bookings",
-        "queryScope": "COLLECTION_GROUP",
-        "fields": [
-          { "fieldPath": "uid", "order": "ASCENDING" },
-          { "fieldPath": "createdAt", "order": "DESCENDING" }
-        ]
-      },
-      {
-        "collectionGroup": "trips",
-        "queryScope": "COLLECTION",
-        "fields": [
-          { "fieldPath": "originId", "order": "ASCENDING" },
-          { "fieldPath": "destinationId", "order": "ASCENDING" },
-          { "fieldPath": "date", "order": "ASCENDING" },
-          { "fieldPath": "datetime", "order": "ASCENDING" }
-        ]
-      },
-      {
-        "collectionGroup": "trips",
-        "queryScope": "COLLECTION",
-        "fields": [
-          { "fieldPath": "originId", "order": "ASCENDING" },
-          { "fieldPath": "destinationId", "order": "ASCENDING" },
-          { "fieldPath": "datetime", "order": "ASCENDING" }
-        ]
-      }
-    ],
-    "fieldOverrides": []
-  }
-  
+  "indexes": [
+    {
+      "collectionGroup": "rules",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerUid", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "trips",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerUid", "order": "ASCENDING" },
+        { "fieldPath": "datetime", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "bookings",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "uid", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "trips",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "originId", "order": "ASCENDING" },
+        { "fieldPath": "destinationId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" },
+        { "fieldPath": "datetime", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "trips",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "originId", "order": "ASCENDING" },
+        { "fieldPath": "destinationId", "order": "ASCENDING" },
+        { "fieldPath": "datetime", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "conversations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "participants", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "lastMessageAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

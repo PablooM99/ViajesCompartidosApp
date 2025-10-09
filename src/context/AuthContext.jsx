@@ -1,18 +1,15 @@
+// src/context/AuthContext.jsx
 import { createContext, useContext, useEffect, useState } from "react";
 import { auth, db, googleProvider } from "../firebase/config";
 import {
   onAuthStateChanged,
   signInWithPopup,
   signInWithRedirect,
-  getRedirectResult,
   signOut,
   setPersistence,
   browserLocalPersistence,
 } from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
-
-// (Opcional) si no usas FCM, puedes quitar estas importaciones
-// import { initMessaging, requestAndSaveFcmToken, attachOnMessage } from "../firebase/messaging";
 import { useToast } from "./ToastContext";
 
 const AuthContext = createContext(null);
@@ -41,14 +38,7 @@ export default function AuthProvider({ children }) {
     })();
   }, []);
 
-  // Resultado del redirect (si lo hubo)
-  useEffect(() => {
-    getRedirectResult(auth).catch((e) => {
-      if (e) console.warn("Redirect warn:", e.message);
-    });
-  }, []);
-
-  // Suscripción principal
+  // Suscripción principal al estado de auth
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       try {
@@ -83,13 +73,27 @@ export default function AuthProvider({ children }) {
     return () => unsub();
   }, []);
 
-  // Login: intenta popup; si el navegador lo bloquea, cae a redirect
+  // Login: intenta POPUP y solo cae a REDIRECT si el popup es bloqueado
   const login = async () => {
     try {
       await setPersistence(auth, browserLocalPersistence);
       await signInWithPopup(auth, googleProvider);
+      // si el popup funcionó, no hay redirect ni polling extra
     } catch (e) {
-      await signInWithRedirect(auth, googleProvider);
+      // Fallback solo para bloqueos/restricciones de popup
+      const code = e?.code || "";
+      const popupIssues = [
+        "auth/popup-blocked",
+        "auth/popup-closed-by-user",
+        "auth/cancelled-popup-request",
+        "auth/internal-error", // algunos navegadores lo usan cuando bloquean
+      ];
+      if (popupIssues.includes(code)) {
+        await signInWithRedirect(auth, googleProvider);
+      } else {
+        console.warn("Popup login error:", code, e?.message);
+        // si querés, mostrás un toast de error aquí
+      }
     }
   };
 

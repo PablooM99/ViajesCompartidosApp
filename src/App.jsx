@@ -2,8 +2,11 @@ import { Routes, Route, Link, NavLink, useLocation, Navigate } from "react-route
 import { useAuth } from "./context/AuthContext.jsx";
 import Home from "./pages/Home.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
+import Admin from "./pages/Admin.jsx"; // ⬅️ nuevo
+import Messages from "./pages/Messages.jsx"; // ⬅️ si ya lo tenés, mantén el import
 
-// Guard simple para /panel (sin archivo extra)
+import { useRole } from "./hooks/useRole.js"; // ya lo tenés
+
 function RequireAuth({ children }) {
   const { user, loading } = useAuth();
   const loc = useLocation();
@@ -12,8 +15,19 @@ function RequireAuth({ children }) {
   return children;
 }
 
+function RequireAdmin({ children }) {
+  const { user, loading } = useAuth();
+  const { role } = useRole(user?.uid);
+  const loc = useLocation();
+  if (loading) return <div className="p-4 text-sm text-neutral-500">Cargando…</div>;
+  if (!user) return <Navigate to="/" replace state={{ from: loc }} />;
+  if (role !== "admin") return <Navigate to="/" replace />;
+  return children;
+}
+
 export default function App() {
   const { user, loading, login, logout } = useAuth();
+  const { role } = useRole(user?.uid);
   const { pathname } = useLocation();
 
   const Item = ({ to, children }) => (
@@ -32,7 +46,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-neutral-50">
-      {/* Barra superior (antes la tenías dentro de App.jsx) */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur border-b">
         <div className="max-w-5xl mx-auto px-3 h-14 flex items-center gap-3">
           <Link to="/" className="font-semibold">
@@ -43,6 +56,8 @@ export default function App() {
           <nav className="ml-2 flex items-center gap-2">
             <Item to="/">Inicio</Item>
             <Item to="/panel">Panel</Item>
+            <Item to="/mensajes">Mensajes</Item>
+            {role === "admin" && <Item to="/admin">Admin</Item>}
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
@@ -78,7 +93,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Contenido */}
       <main className="flex-1">
         <Routes>
           <Route path="/" element={<Home />} />
@@ -88,6 +102,22 @@ export default function App() {
               <RequireAuth>
                 <Dashboard />
               </RequireAuth>
+            }
+          />
+          <Route
+            path="/mensajes"
+            element={
+              <RequireAuth>
+                <Messages />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              <RequireAdmin>
+                <Admin />
+              </RequireAdmin>
             }
           />
           <Route path="*" element={<Home />} />
