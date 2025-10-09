@@ -1,15 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import dayjs from "dayjs";
-import { collection, getDocs, query, where, orderBy } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  orderBy,
+  doc,
+  setDoc,
+  deleteDoc,
+} from "firebase/firestore";
 import { db } from "../firebase/config";
 import { LOCALIDADES } from "../constants/localidades";
 import Select from "../components/Select";
 import DriverCard from "../components/DriverCard";
 import ReservationModal from "../components/ReservationModal";
 import { useAuth } from "../context/AuthContext";
-import { doc, setDoc, deleteDoc } from "firebase/firestore";
 import { useToast } from "../context/ToastContext";
 
+// Mapa id → objeto localidad
 const LMAP = Object.fromEntries(LOCALIDADES.map((l) => [l.id, l]));
 
 export default function Home() {
@@ -17,6 +26,7 @@ export default function Home() {
   const [destination, setDestination] = useState("");
   const [date, setDate] = useState(dayjs().format("YYYY-MM-DD"));
   const [flex7, setFlex7] = useState(false);
+
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -26,16 +36,23 @@ export default function Home() {
   const { user } = useAuth();
   const { success, error } = useToast();
 
+  const limitText = useMemo(() => (flex7 ? " (próx. 7 días)" : ""), [flex7]);
+
   const swap = () => {
-    const o = origin; const d = destination;
-    setOrigin(d); setDestination(o);
+    const o = origin;
+    const d = destination;
+    setOrigin(d);
+    setDestination(o);
   };
 
   const fetchTrips = async () => {
-    if (!origin || !destination) return;
+    if (!origin || !destination) {
+      setTrips([]);
+      return;
+    }
     setLoading(true);
     try {
-      let qBase = [
+      const base = [
         where("originId", "==", origin),
         where("destinationId", "==", destination),
       ];
@@ -44,29 +61,44 @@ export default function Home() {
       if (flex7) {
         const from = dayjs(date).startOf("day").toDate();
         const to = dayjs(date).add(7, "day").endOf("day").toDate();
-        qy = query(collection(db, "trips"), ...qBase, where("datetime", ">=", from), where("datetime", "<=", to), orderBy("datetime", "asc"));
+        qy = query(
+          collection(db, "trips"),
+          ...base,
+          where("datetime", ">=", from),
+          where("datetime", "<=", to),
+          orderBy("datetime", "asc")
+        );
       } else {
-        qy = query(collection(db, "trips"), ...qBase, where("date", "==", date), orderBy("datetime", "asc"));
+        qy = query(
+          collection(db, "trips"),
+          ...base,
+          where("date", "==", date),
+          orderBy("datetime", "asc")
+        );
       }
 
       const snap = await getDocs(qy);
-      const list = snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-        ownerUid: d.data().ownerUid,
-        origin: LMAP[d.data().originId],
-        destination: LMAP[d.data().destinationId],
-      }));
+      const list = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          ...data,
+          ownerUid: data.ownerUid,
+          origin: LMAP[data.originId],
+          destination: LMAP[data.destinationId],
+        };
+      });
       setTrips(list);
     } catch (e) {
-      console.error(e);
+      console.error("fetchTrips error:", e);
+      error("No se pudieron cargar los viajes");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (origin && destination) fetchTrips();
+    fetchTrips();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [origin, destination, date, flex7]);
 
@@ -79,19 +111,26 @@ export default function Home() {
     fetchTrips();
   };
 
+  // Alerts (seguir ruta)
   const routeKey = origin && destination ? `${origin}_${destination}` : "";
 
   const followRoute = async () => {
-    if (!user || !routeKey) return alert("Ingresá con Google");
+    if (!user || !routeKey) return error("Ingresá con Google");
     try {
-      await setDoc(doc(db, "users", user.uid, "alerts", routeKey), {
-        originId: origin,
-        destinationId: destination,
-        active: true,
-        createdAt: new Date()
-      }, { merge: true });
+      await setDoc(
+        doc(db, "users", user.uid, "alerts", routeKey),
+        {
+          originId: origin,
+          destinationId: destination,
+          active: true,
+          createdAt: new Date(),
+        },
+        { merge: true }
+      );
       success("Te avisamos cuando haya nuevos viajes en esta ruta");
-    } catch (e) { error(e.message); }
+    } catch (e) {
+      error(e.message || "No se pudo guardar la alerta");
+    }
   };
 
   const unfollowRoute = async () => {
@@ -99,7 +138,9 @@ export default function Home() {
     try {
       await deleteDoc(doc(db, "users", user.uid, "alerts", routeKey));
       success("Dejaste de seguir esta ruta");
-    } catch (e) { error(e.message); }
+    } catch (e) {
+      error(e.message || "No se pudo quitar la alerta");
+    }
   };
 
   return (
@@ -108,15 +149,28 @@ export default function Home() {
         <div className="grid grid-cols-1 gap-3">
           <div className="flex gap-2 items-end">
             <div className="flex-1">
-              <Select label="Salida" value={origin} onChange={setOrigin} options={LOCALIDADES} />
+              <Select
+                label="Salida"
+                value={origin}
+                onChange={setOrigin}
+                options={LOCALIDADES}
+              />
             </div>
-            <button onClick={swap} className="rounded-xl border px-3 py-2">⇄</button>
+            <button onClick={swap} className="rounded-xl border px-3 py-2">
+              ⇄
+            </button>
             <div className="flex-1">
-              <Select label="Destino" value={destination} onChange={setDestination} options={LOCALIDADES} />
+              <Select
+                label="Destino"
+                value={destination}
+                onChange={setDestination}
+                options={LOCALIDADES}
+              />
             </div>
           </div>
+
           <label className="block">
-            <span className="text-xs text-neutral-600">Fecha</span>
+            <span className="text-xs text-neutral-600">Fecha{limitText}</span>
             <input
               type="date"
               className="mt-1 w-full rounded-2xl border bg-white px-3 py-2"
@@ -124,15 +178,30 @@ export default function Home() {
               onChange={(e) => setDate(e.target.value)}
             />
           </label>
+
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={flex7} onChange={(e)=>setFlex7(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={flex7}
+              onChange={(e) => setFlex7(e.target.checked)}
+            />
             Incluir próximos 7 días
           </label>
 
           {origin && destination && (
             <div className="flex gap-2">
-              <button onClick={followRoute} className="rounded-xl border px-3 py-2 text-sm">🔔 Avisarme</button>
-              <button onClick={unfollowRoute} className="rounded-xl border px-3 py-2 text-sm">🔕 Dejar de avisar</button>
+              <button
+                onClick={followRoute}
+                className="rounded-xl border px-3 py-2 text-sm"
+              >
+                🔔 Avisarme
+              </button>
+              <button
+                onClick={unfollowRoute}
+                className="rounded-xl border px-3 py-2 text-sm"
+              >
+                🔕 Dejar de avisar
+              </button>
             </div>
           )}
         </div>

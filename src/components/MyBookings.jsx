@@ -3,7 +3,7 @@ import { collectionGroup, getDocs, query, where, orderBy, doc, getDoc } from "fi
 import { db } from "../firebase/config";
 import dayjs from "dayjs";
 import { httpsCallable } from "firebase/functions";
-import { functions } from "../firebase/functions"; // <- usa región correcta
+import { functions } from "../firebase/functions";
 import { useToast } from "../context/ToastContext";
 import ReviewModal from "./ReviewModal";
 
@@ -38,7 +38,8 @@ export default function MyBookings({ uid, onChanged }) {
         base.map(async (r) => {
           const { tripId } = extractIds(r._path);
           const tSnap = await getDoc(doc(db, "trips", tripId));
-          return { ...r, _tripId: tripId, trip: tSnap.exists() ? tSnap.data() : null };
+          const trip = tSnap.exists() ? tSnap.data() : null;
+          return { ...r, _tripId: tripId, trip };
         })
       );
       setRows(withTrip);
@@ -57,7 +58,7 @@ export default function MyBookings({ uid, onChanged }) {
     if (!confirm("¿Cancelar esta reserva?")) return;
     setBusyId(row.id);
     try {
-      const fn = httpsCallable(functions, "cancelBooking"); // <- usa helper con región
+      const fn = httpsCallable(functions, "cancelBooking");
       await fn({ tripId, bookingId });
       await load();
       onChanged?.();
@@ -92,17 +93,36 @@ export default function MyBookings({ uid, onChanged }) {
             <li key={r.id} className="border rounded-xl p-2">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="font-medium">{trip?.originId} → {trip?.destinationId}</div>
+                  <div className="font-medium">
+                    {trip?.originId} → {trip?.destinationId}
+                  </div>
                   <div className="text-neutral-500">
                     {when} • ${trip?.price} x {r.seats} = <span className="font-medium">${total}</span>
                   </div>
+                  {r.note && (
+                    <div className="mt-1 text-neutral-700">
+                      <span className="font-medium">Nota:</span> {r.note}
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => cancel(r)} disabled={busyId === r.id} className="rounded-xl border px-3 py-1">
+                  <button
+                    onClick={() => cancel(r)}
+                    disabled={busyId === r.id}
+                    className="rounded-xl border px-3 py-1"
+                  >
                     {busyId === r.id ? "Cancelando…" : "Cancelar"}
                   </button>
                   <button
-                    onClick={() => { setRevTrip({ ...trip, id: r._tripId, origin: {label: trip.originId}, destination: {label: trip.destinationId} }); setRevOpen(true); }}
+                    onClick={() => {
+                      setRevTrip({
+                        ...trip,
+                        id: r._tripId,
+                        origin: { label: trip.originId },
+                        destination: { label: trip.destinationId },
+                      });
+                      setRevOpen(true);
+                    }}
                     className="rounded-xl border px-3 py-1"
                     disabled={!isPast}
                     title={!isPast ? "Calificable al finalizar el viaje" : ""}
@@ -119,8 +139,12 @@ export default function MyBookings({ uid, onChanged }) {
         )}
       </ul>
 
-      <ReviewModal open={revOpen} onClose={() => setRevOpen(false)} trip={revTrip}
-        onDone={() => { load(); onChanged?.(); }} />
+      <ReviewModal
+        open={revOpen}
+        onClose={() => setRevOpen(false)}
+        trip={revTrip}
+        onDone={() => { load(); onChanged?.(); }}
+      />
     </div>
   );
 }

@@ -1,59 +1,99 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
     function isSignedIn() { return request.auth != null; }
     function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
 
-    // --- NUEVO: permiso para la collection group 'bookings' (solo pasajero) ---
-    match /{path=**}/bookings/{bookingId} {
-      // Permite que cada usuario vea SOLO sus propias reservas
-      allow read: if isSignedIn() && request.auth.uid == resource.data.uid;
-      // Escrituras SOLO por Cloud Functions
-      allow create, update, delete: if false;
+    // Admin = existe un doc /admins/{uid}
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
-    // Usuarios (perfil)
+    // Puede publicar viajes/reglas: admin o usuario con rol == 'driver'
+    function canPublish() {
+      return isAdmin() ||
+        (isSignedIn() &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'driver');
+    }
+
+    // ----- USERS -----
     match /users/{uid} {
       allow read: if true;
-      allow create: if isOwner(uid);
-      allow update, delete: if isOwner(uid);
 
-      // Alertas (rutas seguidas para push)
+      // Alta sólo como "traveler" (o sin rol -> lo toma el backend como traveler)
+      allow create: if isOwner(uid)
+        && (!('role' in request.resource.data) || request.resource.data.role == 'traveler');
+
+      // El usuario NO puede cambiarse el rol; sólo admin puede
+      allow update: if (isOwner(uid) && request.resource.data.role == resource.data.role)
+                    || isAdmin();
+
+      allow delete: if isOwner(uid) || isAdmin();
+
+      // alertas (seguimientos para push)
       match /alerts/{alertId} {
         allow read, create, update, delete: if isOwner(uid);
       }
     }
 
-    // Reglas recurrentes del chofer
+    // ----- RULES (recurrencias del chofer) -----
     match /rules/{ruleId} {
-      allow read: if isSignedIn() && (request.auth.uid == resource.data.ownerUid);
-      allow create: if isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
-      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.ownerUid;
+      allow read: if isSignedIn() && request.auth.uid == resource.data.ownerUid;
+
+      // Crear/editar/borrar sólo si puede publicar (driver/admin) y es dueño
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && canPublish();
+      allow update, delete: if isSignedIn()
+        && request.auth.uid == resource.data.ownerUid
+        && canPublish();
     }
 
-    // Viajes
+    // ----- TRIPS -----
     match /trips/{tripId} {
       allow read: if true;
-      // Dueño puede actualizar salvo seatsAvailable (lo maneja la Function)
-      allow create: if isSignedIn();
-      allow update: if isSignedIn()
-        && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.seatsAvailable == resource.data.seatsAvailable;
-      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
 
-      // Reservas
+      // Crear viajes: sólo driver/admin y dueño
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && canPublish();
+
+      // Actualizar: dueño driver/admin (o admin), sin tocar seatsAvailable desde el cliente
+      allow update: if isSignedIn()
+        && (
+          (request.auth.uid == resource.data.ownerUid && canPublish())
+          || isAdmin()
+        )
+        && request.resource.data.seatsAvailable == resource.data.seatsAvailable;
+
+      // Borrar: dueño driver/admin o admin
+      allow delete: if isSignedIn()
+        && (
+          (resource.data.ownerUid == request.auth.uid && canPublish())
+          || isAdmin()
+        );
+
+      // Reservas bajo cada viaje
       match /bookings/{bookingId} {
-        // Lectura: pasajero dueño de la reserva o dueño del viaje
+        // Lee pasajero dueño o chofer dueño del viaje
         allow read: if isSignedIn() && (
           request.auth.uid == resource.data.uid ||
           get(/databases/$(database)/documents/trips/$(tripId)).data.ownerUid == request.auth.uid
         );
-        // Escrituras SOLO por Functions (admin SDK)
+        // Escrituras sólo por Functions
         allow create, update, delete: if false;
       }
     }
 
-    // Reseñas del chofer (sólo lectura desde cliente)
+    // ----- LECTURA por COLLECTION GROUP (/bookings en cualquier parte) -----
+    // Necesario para la vista "Mis reservas" (collectionGroup('bookings'))
+    match /{path=**}/bookings/{bookingId} {
+      allow read: if isSignedIn() && request.auth.uid == resource.data.uid;
+      allow create, update, delete: if false;
+    }
+
+    // ----- REVIEWS -----
     match /drivers/{driverUid}/reviews/{rid} {
       allow read: if true;
       allow create, update, delete: if false;

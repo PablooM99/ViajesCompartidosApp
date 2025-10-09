@@ -1,15 +1,17 @@
 import { useState, useMemo } from "react";
 import Modal from "./Modal";
 import dayjs from "dayjs";
-import { getFunctions, httpsCallable } from "firebase/functions";
-import { app } from "../firebase/config";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "../firebase/functions"; // usa la región correcta
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 
 export default function ReservationModal({ open, onClose, trip, onConfirmed }) {
   const { user } = useAuth();
   const { success, error } = useToast();
+
   const [seats, setSeats] = useState(1);
+  const [note, setNote] = useState(""); // ← NUEVO: comentario para el chofer
   const [loading, setLoading] = useState(false);
 
   const limit = useMemo(() => {
@@ -31,14 +33,18 @@ export default function ReservationModal({ open, onClose, trip, onConfirmed }) {
     if (!trip?.id) return;
     if (!Number.isInteger(seats) || seats < 1 || seats > limit)
       return error("Cantidad inválida");
+    const noteTrim = String(note || "").trim();
+    if (noteTrim.length > 300) return error("La nota no puede superar 300 caracteres");
+
     setLoading(true);
     try {
-      const fn = httpsCallable(getFunctions(app), "reserveSeats");
-      await fn({ tripId: trip.id, seats });
+      const fn = httpsCallable(functions, "reserveSeats");
+      await fn({ tripId: trip.id, seats, note: noteTrim }); // ← envía la nota
       success("Reserva confirmada ✨");
       onConfirmed?.();
       onClose?.();
       setSeats(1);
+      setNote("");
     } catch (e) {
       error(e.message || "No se pudo reservar");
     } finally {
@@ -73,9 +79,12 @@ export default function ReservationModal({ open, onClose, trip, onConfirmed }) {
             <img
               src={trip?.driver?.photoURL || "/user.png"}
               className="h-10 w-10 rounded-full object-cover border"
+              alt="Chofer"
             />
             <div>
-              <div className="font-medium">{trip?.driver?.displayName || "Chofer"}</div>
+              <div className="font-medium">
+                {trip?.driver?.displayName || "Chofer"}
+              </div>
               <div className="text-neutral-500">
                 {dts.isValid() ? dts.format("DD/MM HH:mm") : ""} • ${trip?.price}
               </div>
@@ -84,15 +93,18 @@ export default function ReservationModal({ open, onClose, trip, onConfirmed }) {
               {trip?.seatsAvailable} disp.
             </div>
           </div>
+
           <div className="text-neutral-700">
             {trip?.origin?.label} → {trip?.destination?.label}
           </div>
+
           <label className="block">
             <span className="text-xs text-neutral-600">Cantidad de asientos</span>
             <select
               value={seats}
               onChange={(e) => setSeats(Number(e.target.value))}
               className="mt-1 w-full rounded-2xl border bg-white px-3 py-2"
+              disabled={limit === 0}
             >
               {Array.from({ length: limit }).map((_, i) => (
                 <option key={i + 1} value={i + 1}>
@@ -101,6 +113,22 @@ export default function ReservationModal({ open, onClose, trip, onConfirmed }) {
               ))}
             </select>
           </label>
+
+          {/* NUEVO: Nota para el chofer (opcional) */}
+          <label className="block">
+            <span className="text-xs text-neutral-600">Mensaje para el chofer (opcional)</span>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Ej: Paso por 9 de Julio y San Martín. Llevo una valija."
+              className="mt-1 w-full rounded-2xl border bg-white px-3 py-2 min-h-[90px] resize-y"
+              maxLength={300}
+            />
+            <div className="text-right text-[11px] text-neutral-500">
+              {note.length}/300
+            </div>
+          </label>
+
           <div className="flex items-center justify-between border rounded-xl p-2">
             <span>Total</span>
             <span className="font-semibold">${total}</span>
