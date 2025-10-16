@@ -17,17 +17,21 @@ function RequireAuth({ children }) {
 
 function RequireAdmin({ children }) {
   const { user, loading } = useAuth();
-  const { role } = useRole(user?.uid);
+  const { role, loading: roleLoading } = useRole(user?.uid);
   const loc = useLocation();
-  if (loading) return <div className="p-4 text-sm text-neutral-500">Cargando…</div>;
+
+  if (loading || roleLoading) {
+    return <div className="p-4 text-sm text-neutral-500">Cargando…</div>;
+  }
   if (!user) return <Navigate to="/" replace state={{ from: loc }} />;
   if (role !== "admin") return <Navigate to="/" replace />;
   return children;
 }
 
+
 export default function App() {
   const { user, loading, login, logout } = useAuth();
-  const { role } = useRole(user?.uid);
+  const { role, loading: roleLoading } = useRole(user?.uid);
   const { pathname } = useLocation();
 
   const Item = ({ to, children }) => (
@@ -57,7 +61,7 @@ export default function App() {
             <Item to="/">Inicio</Item>
             <Item to="/panel">Panel</Item>
             <Item to="/mensajes">Mensajes</Item>
-            {role === "admin" && <Item to="/admin">Admin</Item>}
+            {!roleLoading && role === "admin" && <Item to="/admin">Admin</Item>}
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
@@ -125,7 +129,7 @@ export default function App() {
       </main>
 
       <footer className="py-6 text-center text-xs text-neutral-500">
-        MVP • Colores pastel • Mobile-first
+        Viajes Compartidos • Pablo Montenegro • Todos los derechos reservados
       </footer>
     </div>
   );

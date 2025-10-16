@@ -5,62 +5,49 @@ service cloud.firestore {
     function isSignedIn() { return request.auth != null; }
     function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
     function isAdmin() {
-      return isSignedIn() &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
-    // USERS
+    // ---------------- users ----------------
     match /users/{uid} {
       allow read: if true;
 
-      // El dueño puede CREAR su doc
-      allow create: if isOwner(uid);
+      // El dueño puede crear/editar sus datos
+      allow create, update, delete: if isOwner(uid);
 
-      // El dueño puede EDITAR su doc, PERO NO el campo 'role'
-      allow update: if isOwner(uid) &&
-        !request.resource.data.diff(resource.data).changedKeys().hasAny(['role']);
-
-      // Admin puede editar SOLO el campo 'role'
-      allow update: if isAdmin() &&
-        request.resource.data.diff(resource.data).changedKeys().hasOnly(['role']) &&
-        (request.resource.data.role in ['traveler','driver','admin']);
-
-      // El dueño puede borrar su doc (opcional)
-      allow delete: if isOwner(uid);
-
-      // Subcolección: alertas (seguir rutas en Home)
-      match /alerts/{alertId} {
-        allow read, create, update, delete: if isOwner(uid);
-      }
+      // Admin puede cambiar SOLO el campo role
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['role'])
+        && (request.resource.data.role in ['traveler','driver','admin']);
     }
 
-    // REGLAS (recurrencias del chofer)
+    // ------------- rules (chofer) ----------
     match /rules/{ruleId} {
       allow read: if isSignedIn() && (request.auth.uid == resource.data.ownerUid);
       allow create: if isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
       allow update, delete: if isSignedIn() && request.auth.uid == resource.data.ownerUid;
     }
 
-    // TRIPS
+    // ---------------- trips ----------------
     match /trips/{tripId} {
       allow read: if true;
       allow create: if isSignedIn();
-      // El dueño puede editar, salvo seatsAvailable (lo maneja CF)
       allow update: if isSignedIn()
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.seatsAvailable == resource.data.seatsAvailable;
       allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
 
-      // BOOKINGS (solo Functions escriben)
+      // ---- bookings dentro de un trip (lectura por dueño del viaje o pasajero) ----
       match /bookings/{bookingId} {
-        // lectura: pasajero de la reserva o dueño del viaje
+        // Lectura: pasajero dueño de la reserva o dueño del viaje
         allow read: if isSignedIn() && (
           request.auth.uid == resource.data.uid ||
           get(/databases/$(database)/documents/trips/$(tripId)).data.ownerUid == request.auth.uid
         );
+        // Escrituras SOLO por Functions
         allow create, update, delete: if false;
 
-        // PAYMENTS (comprobantes)
+        // Subcolección de pagos
         match /payments/{paymentId} {
           allow read: if isSignedIn() && (
             request.auth.uid == get(/databases/$(database)/documents/trips/$(tripId)/bookings/$(bookingId)).data.uid ||
@@ -73,12 +60,25 @@ service cloud.firestore {
       }
     }
 
-    // CONVERSATIONS (chat privado 1 a 1)
+    // ---------- Lectura de MIS reservas vía collection-group ----------
+    // Habilita: collectionGroup('bookings').where('uid','==',uid)
+    match /{anyPath=**}/bookings/{bookingId} {
+      allow read: if isSignedIn() && request.auth.uid == resource.data.uid;
+    }
+
+    // ---------------- conversations ----------------
     match /conversations/{cid} {
-      allow read: if isSignedIn() && request.auth.uid in resource.data.participants;
+      // IMPORTANTE: permitir get cuando el doc aún NO existe (resource == null),
+      // porque la UI lo "preabre" antes de crearlo.
+      allow read: if isSignedIn() &&
+        (resource == null || request.auth.uid in resource.data.participants);
+
+      // crear/merge por cualquiera de los 2 participantes
       allow create: if isSignedIn()
         && request.resource.data.participants.size() == 2
         && request.auth.uid in request.resource.data.participants;
+
+      // actualizar (p.ej. lastMessageAt) por cualquiera de los participantes
       allow update: if isSignedIn() && request.auth.uid in resource.data.participants;
 
       match /messages/{mid} {
@@ -90,7 +90,7 @@ service cloud.firestore {
       }
     }
 
-    // REVIEWS (solo lectura desde cliente)
+    // ---------------- reviews ----------------
     match /drivers/{driverUid}/reviews/{rid} {
       allow read: if true;
       allow create, update, delete: if false;

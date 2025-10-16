@@ -3,15 +3,20 @@ import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import { getFunctions } from "firebase/functions";
+import { setLogLevel as setFirestoreLogLevel } from "firebase/firestore";
+import { setLogLevel as setFirebaseLogLevel } from "firebase/app";
+
+setFirestoreLogLevel("error");
+setFirebaseLogLevel?.("error");
 
 const firebaseConfig = {
   apiKey: "AIzaSyAn7zRJ1i5kKPLyZ1jemiy0Jvzr1-nygiE",
   authDomain: "viajes-compartidos-9ec7a.firebaseapp.com",
   projectId: "viajes-compartidos-9ec7a",
-  storageBucket: "viajes-compartidos-9ec7a.appspot.com", // ← dominio correcto
+  storageBucket: "viajes-compartidos-9ec7a.firebasestorage.app",
   messagingSenderId: "900322524151",
   appId: "1:900322524151:web:ebc9aaabb2d42c3f2f8cf2",
-  measurementId: "G-YEKTVM6003",
+  measurementId: "G-YEKTVM6003"
 };
 
 export const app = initializeApp(firebaseConfig);

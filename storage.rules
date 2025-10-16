@@ -1,10 +1,9 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-
     function isSignedIn() { return request.auth != null; }
 
-    // Avatares/fotos/etc guardadas bajo users/{uid}/...
+    // Avatares/fotos de perfil del usuario
     match /users/{uid}/{allPaths=**} {
       allow read: if true;
       allow write: if isSignedIn()
@@ -13,14 +12,13 @@ service firebase.storage {
                    && request.resource.contentType.matches('image/.*');
     }
 
-    // Comprobantes de pago (subidos por el pasajero)
-    // Nota: Storage no puede cruzar permisos con Firestore; por simplicidad, lectura pública
-    // (o cambiala a 'request.auth != null' si preferís solo usuarios logueados).
-    match /receipts/{uid}/{bookingId}/{fileName} {
-      allow read: if true;
+    // Comprobantes de pago
+    match /receipts/{uid}/{allPaths=**} {
+      allow read: if isSignedIn() && request.auth.uid == uid; // o true si querés que el chofer los vea por URL pública (mejor mantener privado)
       allow write: if isSignedIn()
                    && request.auth.uid == uid
-                   && request.resource.size < 10 * 1024 * 1024;
+                   && request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('(image|application)/.*');
     }
   }
 }

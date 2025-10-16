@@ -1,33 +1,58 @@
 import { useState } from "react";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "../firebase/config";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { app, auth } from "../firebase/config";
 
-export default function ImageUploader({ uid, path, label, onDone }) {
+export default function ImageUploader({ path = "avatar.jpg", onUploaded }) {
   const [busy, setBusy] = useState(false);
+  const storage = getStorage(app);
 
   const onFile = async (e) => {
     const file = e.target.files?.[0];
-    if (!file || !uid) return;
+    if (!file) return;
+    if (!auth.currentUser) {
+      alert("Tenés que iniciar sesión");
+      return;
+    }
+    // Sólo imágenes
+    if (!file.type.startsWith("image/")) {
+      alert("Formato inválido. Subí una imagen.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert("La imagen debe pesar menos de 5 MB.");
+      return;
+    }
+
     setBusy(true);
     try {
-      const ext = file.name.split(".").pop() || "jpg";
-      const r = ref(storage, `users/${uid}/${path}.${ext}`);
-      await uploadBytes(r, file);
+      const uid = auth.currentUser.uid;
+      const r = ref(storage, `users/${uid}/${path}`);
+      // 👇 mandamos el contentType explícito
+      await uploadBytes(r, file, { contentType: file.type });
       const url = await getDownloadURL(r);
-      onDone?.(url);
+      onUploaded?.(url);
     } catch (err) {
-      alert(err.message || "No se pudo subir la imagen");
+      // Si ves “AppCheck token required” o 403, es App Check (paso 2)
+      console.error("Upload failed:", err);
+      alert(err?.message || "No se pudo subir la imagen");
     } finally {
       setBusy(false);
+      e.target.value = ""; // limpia el input
     }
   };
 
   return (
-    <label className="block">
-      <span className="text-xs text-neutral-600">{label}</span>
-      <input type="file" accept="image/*" onChange={onFile}
-             className="mt-1 w-full rounded-2xl border bg-white px-3 py-2"/>
-      {busy && <div className="text-xs text-neutral-500 mt-1">Subiendo…</div>}
+    <label className="inline-flex items-center gap-2">
+      <input
+        type="file"
+        accept="image/*"
+        onChange={onFile}
+        disabled={busy}
+        className="hidden"
+      />
+      <span className="rounded-xl border px-3 py-1.5 cursor-pointer">
+        {busy ? "Subiendo…" : "Subir foto"}
+      </span>
     </label>
   );
 }

@@ -61,9 +61,10 @@ export default function MyBookings({ uid, onChanged }) {
   };
 
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!uid) return;            // <— clave: no consultar sin uid
+    load().catch(err => console.error("MyBookings query failed:", err));
   }, [uid]);
+  
 
   const cancel = async (row) => {
     const { tripId, bookingId } = extractIds(row._path);

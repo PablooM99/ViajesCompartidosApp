@@ -1,11 +1,7 @@
 {
-    "projects": { "default": "<TU_PROJECT_ID>" },
-    "firestore": {
-      "rules": "firestore.rules",
-      "indexes": "firestore.indexes.json"
-    },
-    "storage": { "rules": "storage.rules" },
-    "functions": { "source": "functions" },
-    "hosting": { "public": "dist" }
-  }
-  
+  "projects": { "default": "viajes-compartidos-9ec7a" },
+  "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" },
+  "storage": { "rules": "storage.rules" },
+  "functions": { "source": "functions" },
+  "hosting": { "public": "dist" }
+}

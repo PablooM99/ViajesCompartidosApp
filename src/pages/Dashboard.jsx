@@ -78,7 +78,7 @@ export default function Dashboard() {
         <div className="bg-white rounded-2xl p-3 border">
           <div className="font-medium">Tu rol actual: viajero</div>
           <div className="text-sm text-neutral-600">
-            Si querés publicar viajes, pedí al administrador que te habilite el
+            Si querés publicar viajes, pedí al administrador (2233016060) que te habilite el
             rol de <b>chofer</b>.
           </div>
         </div>

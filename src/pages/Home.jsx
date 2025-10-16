@@ -18,8 +18,77 @@ import ReservationModal from "../components/ReservationModal";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 
-// Mapa id → objeto localidad
+// Mapa id → objeto localidad (para mostrar labels, etc.)
 const LMAP = Object.fromEntries(LOCALIDADES.map((l) => [l.id, l]));
+
+/**
+ * ORDEN GEO DE TU CORREDOR
+ * Si el label/id de tus localidades difiere (p. ej. “Mar del Plata” vs “Mar del plata”),
+ * ajustá la lista ORDER_LABELS para que coincida EXACTO con tus labels o ids.
+ */
+const ORDER_LABELS = ["Piran", "Vidal", "Vivorata", "Mar del plata"];
+
+/**
+ * Construye un mapa id -> índice de posición en la traza, buscando por:
+ * - id igual
+ * - o label (insensible a mayúsculas/minúsculas)
+ */
+const POS = (() => {
+  const map = {};
+  let idx = 0;
+  const norm = (s) => String(s || "").trim().toLowerCase();
+  ORDER_LABELS.forEach((name) => {
+    const want = norm(name);
+    const item =
+      LOCALIDADES.find(
+        (l) => norm(l.id) === want || norm(l.label ?? l.name) === want
+      ) || null;
+    if (item) map[item.id] = idx++;
+  });
+  return map;
+})();
+
+const posOf = (locId) =>
+  Number.isFinite(POS[locId]) ? POS[locId] : Number.NaN;
+
+/**
+ * Devuelve true si el segmento (wantO -> wantD) está contenido dentro del segmento
+ * publicado (pubO -> pubD) siguiendo el orden geográfico definido por POS, en la
+ * misma dirección.
+ *
+ * Ejemplos:
+ * - Quiere Vivorata → Mar del plata y la publicación es Vidal → Mar del plata → ✅ (dentro del tramo)
+ * - Quiere Mar del plata → Vivorata y la publicación es Mar del plata → Vidal → ✅ (dentro hacia atrás)
+ * - Direcciones opuestas → ❌
+ */
+function segmentIncludes(wantO, wantD, pubO, pubD) {
+  const wo = posOf(wantO);
+  const wd = posOf(wantD);
+  const po = posOf(pubO);
+  const pd = posOf(pubD);
+
+  // Si alguna localidad no está mapeada, caemos a “coincidencia exacta”
+  if ([wo, wd, po, pd].some((v) => Number.isNaN(v))) {
+    return wantO === pubO && wantD === pubD;
+  }
+
+  // No tiene sentido ir al mismo lugar
+  if (wo === wd) return false;
+
+  const wantForward = wo < wd;
+  const pubForward = po < pd;
+
+  // Deben ir en la MISMA dirección
+  if (wantForward !== pubForward) return false;
+
+  if (wantForward) {
+    // Adelante: po <= wo <= wd <= pd
+    return po <= wo && wd <= pd;
+  } else {
+    // Atrás: po >= wo >= wd >= pd
+    return po >= wo && wd >= pd;
+  }
+}
 
 export default function Home() {
   const [origin, setOrigin] = useState("");
@@ -52,18 +121,15 @@ export default function Home() {
     }
     setLoading(true);
     try {
-      const base = [
-        where("originId", "==", origin),
-        where("destinationId", "==", destination),
-      ];
-
+      // ✅ Cambiamos la consulta:
+      //   ya NO filtramos por originId/destinationId en Firestore.
+      //   Traemos por fecha (o rango) y filtramos por “segmento” en memoria.
       let qy;
       if (flex7) {
         const from = dayjs(date).startOf("day").toDate();
         const to = dayjs(date).add(7, "day").endOf("day").toDate();
         qy = query(
           collection(db, "trips"),
-          ...base,
           where("datetime", ">=", from),
           where("datetime", "<=", to),
           orderBy("datetime", "asc")
@@ -71,23 +137,28 @@ export default function Home() {
       } else {
         qy = query(
           collection(db, "trips"),
-          ...base,
           where("date", "==", date),
           orderBy("datetime", "asc")
         );
       }
 
       const snap = await getDocs(qy);
-      const list = snap.docs.map((d) => {
-        const data = d.data();
-        return {
-          id: d.id,
-          ...data,
-          ownerUid: data.ownerUid,
-          origin: LMAP[data.originId],
-          destination: LMAP[data.destinationId],
-        };
-      });
+      const list = snap.docs
+        .map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            ...data,
+            ownerUid: data.ownerUid,
+            origin: LMAP[data.originId],
+            destination: LMAP[data.destinationId],
+          };
+        })
+        .filter((t) =>
+          // 👉 Filtro por “segmento contenido”
+          segmentIncludes(origin, destination, t.originId, t.destinationId)
+        );
+
       setTrips(list);
     } catch (e) {
       console.error("fetchTrips error:", e);
