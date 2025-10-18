@@ -47,19 +47,19 @@ function tripLabel(t) {
 
 export default function Messages() {
   const { user } = useAuth();
-  const { canPublish } = useRole(user?.uid);
   const { error } = useToast();
+  const { /* role, */ canPublish } = useRole(user?.uid); // lo seguimos leyendo por si lo usás en otras partes
 
   // selector de viaje
-  const [myTrips, setMyTrips] = useState([]);
+  const [myTrips, setMyTrips] = useState([]);     // unión: owned ∪ booked
   const [selectedTripId, setSelectedTripId] = useState("");
 
   // contactos de ese viaje
-  const [contacts, setContacts] = useState([]); // [{uid}]
-  const [profiles, setProfiles] = useState({}); // { uid: {id, displayName, photoURL, email} }
+  const [contacts, setContacts] = useState([]);   // [{uid}]
+  const [profiles, setProfiles] = useState({});   // { uid: {id, displayName, photoURL, email} }
 
   // meta (preview) por thread
-  const [convMeta, setConvMeta] = useState({}); // { "<tripId>__<tid>": { lastMessage, lastMessageAt } }
+  const [convMeta, setConvMeta] = useState({});   // { "<tripId>__<tid>": { lastMessage, lastMessageAt } }
   const convMetaUnsubsRef = useRef({});
 
   // chat
@@ -68,56 +68,61 @@ export default function Messages() {
   const [text, setText] = useState("");
   const bottomRef = useRef(null);
 
-  // ---------- cargar viajes del usuario según rol ----------
+  // ---------- cargar owned ∪ booked ----------
   useEffect(() => {
     if (!user) return;
 
     (async () => {
       try {
-        if (canPublish) {
-          // Chofer: viajes donde es owner
-          const qy = query(
+        const all = {};
+        // 1) Viajes que posee (owner)
+        {
+          const qOwn = query(
             collection(db, "trips"),
             where("ownerUid", "==", user.uid),
             orderBy("datetime", "desc")
           );
-          const snap = await getDocs(qy);
-          setMyTrips(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        } else {
-          // Viajero: viajes que reservó (collectionGroup bookings)
-          const qy = query(
+          const snap = await getDocs(qOwn);
+          snap.docs.forEach(d => { all[d.id] = { id: d.id, ...d.data() }; });
+        }
+
+        // 2) Viajes que reservó (collectionGroup bookings)
+        {
+          const qBooked = query(
             collectionGroup(db, "bookings"),
             where("uid", "==", user.uid),
             orderBy("createdAt", "desc")
           );
-          const snap = await getDocs(qy);
-          const uniqTripIds = Array.from(
-            new Set(
-              snap.docs
-                .map((bd) => bd.ref.path.split("/")[1]) // trips/{tripId}/bookings/{bookingId}
-                .filter(Boolean)
-            )
-          );
+          const bsnap = await getDocs(qBooked);
+          const tripIds = Array.from(new Set(
+            bsnap.docs
+              .map(bd => bd.ref.path.split("/")[1]) // trips/{tripId}/bookings/{bookingId}
+              .filter(Boolean)
+          ));
 
-          const trips = [];
-          for (const tid of uniqTripIds) {
-            const tsnap = await getDoc(doc(db, "trips", tid));
-            if (tsnap.exists()) trips.push({ id: tid, ...tsnap.data() });
+          for (const tid of tripIds) {
+            if (!all[tid]) {
+              const tsnap = await getDoc(doc(db, "trips", tid));
+              if (tsnap.exists()) all[tid] = { id: tid, ...tsnap.data() };
+            }
           }
-          trips.sort((a, b) => tsMillis(b?.datetime || b?.date) - tsMillis(a?.datetime || a?.date));
-          setMyTrips(trips);
         }
+
+        const unified = Object.values(all)
+          .map(t => ({ ...t, _k: tsMillis(t?.datetime || t?.date) }))
+          .sort((a, b) => b._k - a._k);
+        setMyTrips(unified);
       } catch (e) {
         console.error(e);
         error("No se pudieron cargar tus viajes para mensajería");
       }
     })();
-  }, [user?.uid, canPublish, error]);
+  }, [user?.uid, error]);
 
-  // ---------- al elegir viaje: cargar contactos y perfiles ----------
+  // ---------- al elegir viaje: contactos y perfiles ----------
   useEffect(() => {
-    // limpiar listeners de meta cuando se cambia de viaje
-    Object.values(convMetaUnsubsRef.current).forEach((fn) => fn?.());
+    // limpiar listeners meta
+    Object.values(convMetaUnsubsRef.current).forEach(fn => fn?.());
     convMetaUnsubsRef.current = {};
     setConvMeta({});
     setActivePeerUid("");
@@ -131,23 +136,20 @@ export default function Messages() {
     (async () => {
       try {
         const tSnap = await getDoc(doc(db, "trips", selectedTripId));
-        if (!tSnap.exists()) {
-          setContacts([]);
-          return;
-        }
+        if (!tSnap.exists()) { setContacts([]); return; }
         const trip = { id: selectedTripId, ...tSnap.data() };
 
-        if (canPublish) {
-          // todos los pasajeros de ese viaje
-          const bsnap = await getDocs(collection(db, "trips", selectedTripId, "bookings"));
-          const uids = Array.from(
-            new Set(bsnap.docs.map((d) => d.data()?.uid).filter((u) => !!u && u !== user.uid))
-          );
-          setContacts(uids.map((uid) => ({ uid })));
+        const isOwner = trip.ownerUid === user.uid;
+
+        if (isOwner) {
+          // soy el chofer de este viaje → contactos = pasajeros
+          const bs = await getDocs(collection(db, "trips", selectedTripId, "bookings"));
+          const uids = Array.from(new Set(bs.docs.map(d => d.data()?.uid).filter(u => !!u && u !== user.uid)));
+          setContacts(uids.map(uid => ({ uid })));
           await fetchProfiles(uids);
           wireConvMeta(selectedTripId, [user.uid, ...uids]);
         } else {
-          // viajero: solo el chofer del viaje
+          // soy pasajero en este viaje (aunque mi rol sea driver/admin) → contacto = chofer
           const owner = trip.ownerUid;
           if (owner && owner !== user.uid) {
             setContacts([{ uid: owner }]);
@@ -163,20 +165,20 @@ export default function Messages() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTripId, canPublish, user?.uid]);
+  }, [selectedTripId, user?.uid]);
 
   // carga perfiles faltantes (batch de 10)
   const fetchProfiles = async (uids) => {
-    const toFetch = (uids || []).filter((u) => u && !profiles[u]);
+    const toFetch = (uids || []).filter(u => u && !profiles[u]);
     if (toFetch.length === 0) return;
     try {
       for (const batch of chunk(toFetch, 10)) {
         const qy = query(collection(db, "users"), where(documentId(), "in", batch));
         const snap = await getDocs(qy);
         const updates = {};
-        snap.docs.forEach((d) => (updates[d.id] = { id: d.id, ...(d.data() || {}) }));
+        snap.docs.forEach(d => (updates[d.id] = { id: d.id, ...(d.data() || {}) }));
         for (const u of batch) if (!updates[u]) updates[u] = { id: u };
-        setProfiles((prev) => ({ ...prev, ...updates }));
+        setProfiles(prev => ({ ...prev, ...updates }));
       }
     } catch (e) {
       console.warn("No se pudieron cargar algunos perfiles:", e?.message || e);
@@ -185,23 +187,23 @@ export default function Messages() {
 
   // escuchar meta (lastMessage / lastMessageAt) por contacto para el viaje
   const wireConvMeta = (tripId, uids) => {
-    const peers = (uids || []).filter((u) => u && u !== user?.uid);
-    peers.forEach((peerUid) => {
-      const tid = threadIdFor(user.uid, peerUid);
+    const me = user?.uid;
+    (uids || []).filter(u => u && u !== me).forEach(peerUid => {
+      const tid = threadIdFor(me, peerUid);
       const tref = doc(db, "tripConversations", tripId, "threads", tid);
       const key = `${tripId}__${tid}`;
       const unsub = onSnapshot(
         tref,
         (snap) => {
           if (!snap.exists()) {
-            setConvMeta((m) => {
+            setConvMeta(m => {
               const copy = { ...m };
               delete copy[key];
               return copy;
             });
           } else {
             const data = snap.data() || {};
-            setConvMeta((m) => ({
+            setConvMeta(m => ({
               ...m,
               [key]: {
                 lastMessage: data.lastMessage || "",
@@ -225,7 +227,7 @@ export default function Messages() {
 
     let unsubMsgs = null;
     (async () => {
-      // Garantizamos el thread
+      // Garantiza el thread (padre)
       await setDoc(
         threadRef,
         {
@@ -243,7 +245,7 @@ export default function Messages() {
       unsubMsgs = onSnapshot(
         qy,
         (snap) => {
-          setMsgs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          setMsgs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
           setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 0);
         },
         (e) => {
@@ -253,9 +255,7 @@ export default function Messages() {
       );
     })();
 
-    return () => {
-      unsubMsgs?.();
-    };
+    return () => { unsubMsgs?.(); };
   }, [selectedTripId, user?.uid, activePeerUid, error]);
 
   const activePeer = activePeerUid ? profiles[activePeerUid] : null;
@@ -269,26 +269,17 @@ export default function Messages() {
       const tid = threadIdFor(user.uid, activePeerUid);
       const threadRef = doc(db, "tripConversations", selectedTripId, "threads", tid);
 
-      // asegurar thread (evita permission-denied)
       await setDoc(
         threadRef,
-        {
-          participants: [user.uid, activePeerUid].sort(),
-          createdAt: serverTimestamp(),
-        },
+        { participants: [user.uid, activePeerUid].sort(), createdAt: serverTimestamp() },
         { merge: true }
       );
 
       await addDoc(
         collection(db, "tripConversations", selectedTripId, "threads", tid, "messages"),
-        {
-          text: t,
-          senderUid: user.uid,
-          createdAt: serverTimestamp(),
-        }
+        { text: t, senderUid: user.uid, createdAt: serverTimestamp() }
       );
 
-      // meta para el preview
       await setDoc(
         threadRef,
         { lastMessage: t, lastMessageAt: serverTimestamp() },
@@ -298,25 +289,20 @@ export default function Messages() {
       setText("");
     } catch (e) {
       console.error(e);
-      error(
-        e?.code === "permission-denied"
-          ? "No tenés permisos para enviar en esta conversación"
-          : "No se pudo enviar el mensaje"
-      );
+      error(e?.code === "permission-denied"
+        ? "No tenés permisos para enviar en esta conversación"
+        : "No se pudo enviar el mensaje");
     }
   };
 
   // --------- memos para UI ---------
   const sortedTrips = useMemo(() => {
-    const withKey = myTrips.map((t) => ({
-      ...t,
-      _k: tsMillis(t?.datetime || t?.date),
-    }));
+    const withKey = myTrips.map(t => ({ ...t, _k: tsMillis(t?.datetime || t?.date) }));
     return withKey.sort((a, b) => b._k - a._k);
   }, [myTrips]);
 
   const selectedTrip = useMemo(
-    () => sortedTrips.find((t) => t.id === selectedTripId) || null,
+    () => sortedTrips.find(t => t.id === selectedTripId) || null,
     [sortedTrips, selectedTripId]
   );
 
@@ -359,7 +345,7 @@ export default function Messages() {
           <ul className="space-y-1">
             {selectedTripId && contacts.length === 0 && (
               <li className="text-xs text-neutral-500 px-1 py-1">
-                {canPublish ? "Este viaje no tiene pasajeros aún." : "No hay contacto disponible."}
+                No hay contactos disponibles en este viaje.
               </li>
             )}
             {contacts.map(({ uid }) => {
@@ -400,18 +386,18 @@ export default function Messages() {
       {/* Columna derecha: chat */}
       <div className="bg-white rounded-2xl border h-[70vh] flex flex-col">
         {/* header */}
-        {selectedTripId && activePeer ? (
+        {selectedTripId && activePeerUid ? (
           <div className="p-3 border-b flex items-center gap-3">
             <img
-              src={activePeer?.photoURL || "/user.png"}
+              src={(profiles[activePeerUid]?.photoURL) || "/user.png"}
               alt=""
               className="h-9 w-9 rounded-full border object-cover"
             />
             <div className="flex-1">
               <div className="font-medium">
-                {activePeer?.displayName || activePeer?.email || "Usuario"}
+                {profiles[activePeerUid]?.displayName || profiles[activePeerUid]?.email || "Usuario"}
               </div>
-              <div className="text-xs text-neutral-500">{activePeer?.id || ""}</div>
+              <div className="text-xs text-neutral-500">{activePeerUid}</div>
             </div>
             {selectedTrip && (
               <div className="text-xs text-neutral-500">{tripLabel(selectedTrip)}</div>
@@ -425,20 +411,18 @@ export default function Messages() {
 
         {/* mensajes */}
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {selectedTripId &&
-            activePeerUid &&
-            msgs.map((m) => (
-              <div key={m.id} className="flex">
-                <div
-                  className={[
-                    "max-w-[70%] rounded-2xl px-3 py-2 text-sm",
-                    m.senderUid === user?.uid ? "ml-auto bg-cyan-100" : "bg-neutral-100",
-                  ].join(" ")}
-                >
-                  {m.text}
-                </div>
+          {selectedTripId && activePeerUid && msgs.map((m) => (
+            <div key={m.id} className="flex">
+              <div
+                className={[
+                  "max-w-[70%] rounded-2xl px-3 py-2 text-sm",
+                  m.senderUid === user?.uid ? "ml-auto bg-cyan-100" : "bg-neutral-100",
+                ].join(" ")}
+              >
+                {m.text}
               </div>
-            ))}
+            </div>
+          ))}
           <div ref={bottomRef} />
         </div>
 
