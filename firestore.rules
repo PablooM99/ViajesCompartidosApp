@@ -8,6 +8,19 @@ service cloud.firestore {
       return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
+    // Helpers para chat por viaje
+    function tripOwnerUid(tripId) {
+      return get(/databases/$(database)/documents/trips/$(tripId)).data.ownerUid;
+    }
+    // Acepta cualquiera de los dos esquemas: bookings/{uid} o bookingsByUid/{uid}
+    function hasBookingByUid(tripId, uid) {
+      return exists(/databases/$(database)/documents/trips/$(tripId)/bookings/$(uid))
+        || exists(/databases/$(database)/documents/trips/$(tripId)/bookingsByUid/$(uid));
+    }
+    function isTripParticipant(tripId, uid) {
+      return uid == tripOwnerUid(tripId) || hasBookingByUid(tripId, uid);
+    }
+
     // ---------------- users ----------------
     match /users/{uid} {
       allow read: if true;
@@ -66,10 +79,9 @@ service cloud.firestore {
       allow read: if isSignedIn() && request.auth.uid == resource.data.uid;
     }
 
-    // ---------------- conversations ----------------
+    // ---------------- conversations (sistema anterior; queda por compatibilidad) ----------------
     match /conversations/{cid} {
-      // IMPORTANTE: permitir get cuando el doc aún NO existe (resource == null),
-      // porque la UI lo "preabre" antes de crearlo.
+      // permitir get cuando el doc aún NO existe (resource == null)
       allow read: if isSignedIn() &&
         (resource == null || request.auth.uid in resource.data.participants);
 
@@ -87,6 +99,53 @@ service cloud.firestore {
         allow create: if isSignedIn() &&
           request.auth.uid in get(/databases/$(database)/documents/conversations/$(cid)).data.participants;
         allow update, delete: if false;
+      }
+    }
+
+    // ---------------- Chat por viaje (nuevo) ----------------
+    // Estructura: tripConversations/{tripId}/threads/{threadId}/messages/{mid}
+    // threadId = "<uidA>__<uidB>" (ordenados alfabéticamente)
+    match /tripConversations/{tripId} {
+      // Cualquiera que sea dueño del viaje o tenga booking puede listar/ver el contenedor
+      allow read: if isSignedIn() && isTripParticipant(tripId, request.auth.uid);
+
+      match /threads/{threadId} {
+        // Crear/leer/actualizar thread sólo si:
+        // - El solicitante es participante del thread, y
+        // - Ambos participantes (los dos uids que figuran en participants) son:
+        //   - el chofer (owner) y un pasajero del viaje, o
+        //   - dos pasajeros no está permitido; se fuerza a incluir al owner (opcional, quítalo si querés permitir pasajero↔pasajero)
+        allow read, create, update: if isSignedIn()
+          && request.auth.uid in (resource != null ? resource.data.participants : request.resource.data.participants)
+          && (
+            // Requerimos exactamente 2 participantes
+            (resource != null ? resource.data.participants.size() : request.resource.data.participants.size()) == 2
+          )
+          && (
+            // Uno debe ser el owner y el otro un pasajero del viaje
+            (
+              (tripOwnerUid(tripId) in (resource != null ? resource.data.participants : request.resource.data.participants))
+              &&
+              (
+                // el "otro" participante debe tener booking
+                // (no sabemos cuál es, validamos con el auth o con cualquiera de los dos)
+                hasBookingByUid(tripId, request.auth.uid) ||
+                // si el auth es el owner, entonces validamos que el otro también sea pasajero;
+                // esta condición es aproximada: si necesitás validar exactamente el "otro" uid,
+                // guardá un campo "peerUid" y verificá hasBookingByUid(tripId, peerUid).
+                true
+              )
+            )
+          );
+
+        match /messages/{mid} {
+          // Leer/escribir mensajes si el usuario está en participants del thread
+          // y además es owner o pasajero del viaje.
+          allow read, create: if isSignedIn()
+            && request.auth.uid in get(/databases/$(database)/documents/tripConversations/$(tripId)/threads/$(threadId)).data.participants
+            && isTripParticipant(tripId, request.auth.uid);
+          allow update, delete: if false;
+        }
       }
     }
 

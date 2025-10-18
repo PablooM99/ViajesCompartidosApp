@@ -22,9 +22,9 @@ import useRole from "../hooks/useRole";
 import { useToast } from "../context/ToastContext";
 
 // ---------- utils ----------
-function convIdForTrip(tripId, u1, u2) {
+function threadIdFor(u1, u2) {
   const [a, b] = [String(u1), String(u2)].sort();
-  return `${tripId}__${a}__${b}`;
+  return `${a}__${b}`;
 }
 function chunk(arr, size = 10) {
   const out = [];
@@ -34,7 +34,7 @@ function chunk(arr, size = 10) {
 function tsMillis(x) {
   if (!x) return 0;
   if (typeof x.toMillis === "function") return x.toMillis();
-  if (x.seconds) return x.seconds * 1000;
+  if (x?.seconds) return x.seconds * 1000;
   const d = dayjs(x);
   return d.isValid() ? d.valueOf() : 0;
 }
@@ -47,7 +47,7 @@ function tripLabel(t) {
 
 export default function Messages() {
   const { user } = useAuth();
-  const { isDriver } = useRole(user?.uid);
+  const { canPublish } = useRole(user?.uid);
   const { error } = useToast();
 
   // selector de viaje
@@ -57,8 +57,10 @@ export default function Messages() {
   // contactos de ese viaje
   const [contacts, setContacts] = useState([]); // [{uid}]
   const [profiles, setProfiles] = useState({}); // { uid: {id, displayName, photoURL, email} }
-  const [convMeta, setConvMeta] = useState({}); // { cid: { lastMessage, lastMessageAt } }
-  const convMetaUnsubsRef = useRef({}); // para limpiar listeners
+
+  // meta (preview) por thread
+  const [convMeta, setConvMeta] = useState({}); // { "<tripId>__<tid>": { lastMessage, lastMessageAt } }
+  const convMetaUnsubsRef = useRef({});
 
   // chat
   const [activePeerUid, setActivePeerUid] = useState("");
@@ -72,7 +74,7 @@ export default function Messages() {
 
     (async () => {
       try {
-        if (isDriver) {
+        if (canPublish) {
           // Chofer: viajes donde es owner
           const qy = query(
             collection(db, "trips"),
@@ -110,7 +112,7 @@ export default function Messages() {
         error("No se pudieron cargar tus viajes para mensajería");
       }
     })();
-  }, [user?.uid, isDriver, error]);
+  }, [user?.uid, canPublish, error]);
 
   // ---------- al elegir viaje: cargar contactos y perfiles ----------
   useEffect(() => {
@@ -135,7 +137,7 @@ export default function Messages() {
         }
         const trip = { id: selectedTripId, ...tSnap.data() };
 
-        if (isDriver) {
+        if (canPublish) {
           // todos los pasajeros de ese viaje
           const bsnap = await getDocs(collection(db, "trips", selectedTripId, "bookings"));
           const uids = Array.from(
@@ -143,7 +145,6 @@ export default function Messages() {
           );
           setContacts(uids.map((uid) => ({ uid })));
           await fetchProfiles(uids);
-          // suscribimos meta de conversaciones (ultimo mensaje/hora)
           wireConvMeta(selectedTripId, [user.uid, ...uids]);
         } else {
           // viajero: solo el chofer del viaje
@@ -162,7 +163,7 @@ export default function Messages() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTripId, isDriver, user?.uid]);
+  }, [selectedTripId, canPublish, user?.uid]);
 
   // carga perfiles faltantes (batch de 10)
   const fetchProfiles = async (uids) => {
@@ -174,7 +175,7 @@ export default function Messages() {
         const snap = await getDocs(qy);
         const updates = {};
         snap.docs.forEach((d) => (updates[d.id] = { id: d.id, ...(d.data() || {}) }));
-        for (const u of batch) if (!updates[u]) updates[u] = { id: u }; // fallback
+        for (const u of batch) if (!updates[u]) updates[u] = { id: u };
         setProfiles((prev) => ({ ...prev, ...updates }));
       }
     } catch (e) {
@@ -184,53 +185,50 @@ export default function Messages() {
 
   // escuchar meta (lastMessage / lastMessageAt) por contacto para el viaje
   const wireConvMeta = (tripId, uids) => {
-    // generamos todos los pares user <-> peer (pero solo necesitamos cuando sea distinto)
-    const peers = uids.filter((u) => u !== user?.uid);
+    const peers = (uids || []).filter((u) => u && u !== user?.uid);
     peers.forEach((peerUid) => {
-      const cid = convIdForTrip(tripId, user.uid, peerUid);
-      const cref = doc(db, "conversations", cid);
+      const tid = threadIdFor(user.uid, peerUid);
+      const tref = doc(db, "tripConversations", tripId, "threads", tid);
+      const key = `${tripId}__${tid}`;
       const unsub = onSnapshot(
-        cref,
+        tref,
         (snap) => {
           if (!snap.exists()) {
             setConvMeta((m) => {
               const copy = { ...m };
-              delete copy[cid];
+              delete copy[key];
               return copy;
             });
           } else {
             const data = snap.data() || {};
             setConvMeta((m) => ({
               ...m,
-              [cid]: {
+              [key]: {
                 lastMessage: data.lastMessage || "",
-                lastMessageAt: data.lastMessageAt || data.lastMessageAt,
+                lastMessageAt: data.lastMessageAt || null,
               },
             }));
           }
         },
-        () => {
-          // ignoramos errores de meta
-        }
+        () => {}
       );
-      convMetaUnsubsRef.current[cid] = unsub;
+      convMetaUnsubsRef.current[key] = unsub;
     });
   };
 
-  // abrir/crear conversación y escuchar mensajes
+  // abrir/crear conversación y escuchar mensajes (tripConversations)
   useEffect(() => {
     if (!selectedTripId || !user || !activePeerUid) return;
 
-    const cid = convIdForTrip(selectedTripId, user.uid, activePeerUid);
-    const cref = doc(db, "conversations", cid);
+    const tid = threadIdFor(user.uid, activePeerUid);
+    const threadRef = doc(db, "tripConversations", selectedTripId, "threads", tid);
 
     let unsubMsgs = null;
     (async () => {
-      // **garantizamos** que la conversación exista antes de escuchar/escribir
+      // Garantizamos el thread
       await setDoc(
-        cref,
+        threadRef,
         {
-          tripId: selectedTripId,
           participants: [user.uid, activePeerUid].sort(),
           createdAt: serverTimestamp(),
           lastMessageAt: serverTimestamp(),
@@ -239,7 +237,7 @@ export default function Messages() {
       );
 
       const qy = query(
-        collection(db, "conversations", cid, "messages"),
+        collection(db, "tripConversations", selectedTripId, "threads", tid, "messages"),
         orderBy("createdAt", "asc")
       );
       unsubMsgs = onSnapshot(
@@ -268,29 +266,31 @@ export default function Messages() {
       const t = String(text || "").trim();
       if (!t) return;
 
-      const cid = convIdForTrip(selectedTripId, user.uid, activePeerUid);
-      const cref = doc(db, "conversations", cid);
+      const tid = threadIdFor(user.uid, activePeerUid);
+      const threadRef = doc(db, "tripConversations", selectedTripId, "threads", tid);
 
-      // asegurar doc padre (evita permission-denied en rules)
+      // asegurar thread (evita permission-denied)
       await setDoc(
-        cref,
+        threadRef,
         {
-          tripId: selectedTripId,
           participants: [user.uid, activePeerUid].sort(),
           createdAt: serverTimestamp(),
         },
         { merge: true }
       );
 
-      await addDoc(collection(db, "conversations", cid, "messages"), {
-        text: t,
-        senderUid: user.uid,
-        createdAt: serverTimestamp(),
-      });
+      await addDoc(
+        collection(db, "tripConversations", selectedTripId, "threads", tid, "messages"),
+        {
+          text: t,
+          senderUid: user.uid,
+          createdAt: serverTimestamp(),
+        }
+      );
 
       // meta para el preview
       await setDoc(
-        cref,
+        threadRef,
         { lastMessage: t, lastMessageAt: serverTimestamp() },
         { merge: true }
       );
@@ -320,10 +320,9 @@ export default function Messages() {
     [sortedTrips, selectedTripId]
   );
 
-  // helpers UI
-  const convKeyFor = (peerUid) =>
-    convIdForTrip(selectedTripId || "?", user?.uid || "?", peerUid || "?");
-  const lastMetaFor = (peerUid) => convMeta[convKeyFor(peerUid)] || {};
+  const metaKeyFor = (peerUid) =>
+    `${selectedTripId || "?"}__${threadIdFor(user?.uid || "?", peerUid || "?")}`;
+  const lastMetaFor = (peerUid) => convMeta[metaKeyFor(peerUid)] || {};
   const lastLineFor = (peerUid) => {
     const meta = lastMetaFor(peerUid);
     const hh = meta?.lastMessageAt ? dayjs(tsMillis(meta.lastMessageAt)).format("HH:mm") : "";
@@ -360,7 +359,7 @@ export default function Messages() {
           <ul className="space-y-1">
             {selectedTripId && contacts.length === 0 && (
               <li className="text-xs text-neutral-500 px-1 py-1">
-                {isDriver ? "Este viaje no tiene pasajeros aún." : "No hay contacto disponible."}
+                {canPublish ? "Este viaje no tiene pasajeros aún." : "No hay contacto disponible."}
               </li>
             )}
             {contacts.map(({ uid }) => {
@@ -433,9 +432,7 @@ export default function Messages() {
                 <div
                   className={[
                     "max-w-[70%] rounded-2xl px-3 py-2 text-sm",
-                    m.senderUid === user?.uid
-                      ? "ml-auto bg-cyan-100"
-                      : "bg-neutral-100",
+                    m.senderUid === user?.uid ? "ml-auto bg-cyan-100" : "bg-neutral-100",
                   ].join(" ")}
                 >
                   {m.text}
