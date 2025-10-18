@@ -33,6 +33,12 @@ service cloud.firestore {
         && (request.resource.data.role in ['traveler','driver','admin']);
     }
 
+    // Subcolección de alertas del usuario (para "Avisarme" en Home)
+    match /users/{uid}/alerts/{alertId} {
+      // Solo el dueño puede leer/escribir sus alertas
+      allow read, create, update, delete: if isOwner(uid);
+    }
+
     // ------------- rules (chofer) ----------
     match /rules/{ruleId} {
       allow read: if isSignedIn() && (request.auth.uid == resource.data.ownerUid);
@@ -55,8 +61,18 @@ service cloud.firestore {
           request.auth.uid == resource.data.uid ||
           get(/databases/$(database)/documents/trips/$(tripId)).data.ownerUid == request.auth.uid
         );
-        // escrituras solo por Cloud Functions
-        allow create, update, delete: if false;
+
+        // ✅ Permitir SOLO al dueño del viaje:
+        // - update EXCLUSIVO del campo pickedUp
+        // - delete de la reserva
+        allow update: if isSignedIn()
+          && (tripOwnerUid(tripId) == request.auth.uid)
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['pickedUp']);
+        allow delete: if isSignedIn()
+          && (tripOwnerUid(tripId) == request.auth.uid);
+
+        // Las creaciones siguen prohibidas desde el cliente (las hace Cloud Functions / server)
+        allow create: if false;
 
         match /payments/{paymentId} {
           allow read: if isSignedIn() && (
@@ -104,35 +120,42 @@ service cloud.firestore {
     }
 
     // ---------------- Chat por viaje ----------------
-// Estructura: tripConversations/{tripId}/threads/{threadId}/messages/{mid}
-// threadId = "<uidA>__<uidB>" (ordenados alfabéticamente)
-match /tripConversations/{tripId} {
-  // Leer el contenedor no expone datos sensibles; lo dejamos entrar firmado.
-  allow read: if isSignedIn();
+    // Estructura: tripConversations/{tripId}/threads/{threadId}/messages/{mid}
+    // threadId = "<uidA>__<uidB>" (ordenados alfabéticamente)
+    match /tripConversations/{tripId} {
+      // Leer el contenedor no expone datos sensibles; lo dejamos entrar firmado.
+      allow read: if isSignedIn();
 
-  match /threads/{threadId} {
-    function reqParts() {
-      return (resource != null ? resource.data.participants : request.resource.data.participants);
+      match /threads/{threadId} {
+        function reqParts() {
+          return (resource != null ? resource.data.participants : request.resource.data.participants);
+        }
+
+        // Crear/leer/actualizar un thread solo si:
+        // - Hay exactamente 2 participantes
+        // - El autenticado está en participants
+        // - Y SIEMPRE está incluido el owner del trip (chat pasajero↔chofer)
+        allow read, create, update: if isSignedIn()
+          && reqParts().size() == 2
+          && (request.auth.uid in reqParts())
+          && (tripOwnerUid(tripId) in reqParts());
+
+        match /messages/{mid} {
+          // Leer/escribir mensajes si el autenticado está en participants
+          // y el owner del viaje también está en participants (evita pasajero↔pasajero)
+          allow read, create: if isSignedIn()
+            && (request.auth.uid in get(/databases/$(database)/documents/tripConversations/$(tripId)/threads/$(threadId)).data.participants)
+            && (tripOwnerUid(tripId) in get(/databases/$(database)/documents/tripConversations/$(tripId)/threads/$(threadId)).data.participants);
+
+          allow update, delete: if false;
+        }
+      }
     }
 
-    // Crear/leer/actualizar un thread solo si:
-    // - Hay exactamente 2 participantes
-    // - El autenticado está en participants
-    // - Y SIEMPRE está incluido el owner del trip (chat pasajero↔chofer)
-    allow read, create, update: if isSignedIn()
-      && reqParts().size() == 2
-      && (request.auth.uid in reqParts())
-      && (tripOwnerUid(tripId) in reqParts());
-
-    match /messages/{mid} {
-      // Leer/escribir mensajes si el autenticado está en participants
-      // y el owner del viaje también está en participants (evita pasajero↔pasajero)
-      allow read, create: if isSignedIn()
-        && (request.auth.uid in get(/databases/$(database)/documents/tripConversations/$(tripId)/threads/$(threadId)).data.participants)
-        && (tripOwnerUid(tripId) in get(/databases/$(database)/documents/tripConversations/$(tripId)/threads/$(threadId)).data.participants);
-
-      allow update, delete: if false;
+    // ---------------- reviews ----------------
+    match /drivers/{driverUid}/reviews/{rid} {
+      allow read: if true;
+      allow create, update, delete: if false;
     }
   }
 }
-  }}
